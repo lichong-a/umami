@@ -1,49 +1,57 @@
-import { CLICKHOUSE, RELATIONAL, URL_LENGTH } from 'lib/constants';
-import {
-  getDateFormatClickhouse,
-  prisma,
-  rawQueryClickhouse,
-  runAnalyticsQuery,
-  runQuery,
-} from 'lib/db';
+import { EVENT_NAME_LENGTH, URL_LENGTH } from 'lib/constants';
+import { CLICKHOUSE, PRISMA, runQuery } from 'lib/db';
+import kafka from 'lib/kafka';
+import prisma from 'lib/prisma';
 
 export async function saveEvent(...args) {
-  return runAnalyticsQuery({
-    [RELATIONAL]: () => relationalQuery(...args),
+  return runQuery({
+    [PRISMA]: () => relationalQuery(...args),
     [CLICKHOUSE]: () => clickhouseQuery(...args),
   });
 }
 
-async function relationalQuery(website_id, { session_id, url, event_name, event_data }) {
+async function relationalQuery(
+  { websiteId },
+  { session: { id: sessionId }, eventUuid, url, eventName, eventData },
+) {
   const data = {
-    website_id,
-    session_id,
-    url: url?.substr(0, URL_LENGTH),
-    event_name: event_name?.substr(0, 50),
+    websiteId,
+    sessionId,
+    url: url?.substring(0, URL_LENGTH),
+    eventName: eventName?.substring(0, EVENT_NAME_LENGTH),
+    eventUuid,
   };
 
-  if (event_data) {
-    data.event_data = {
+  if (eventData) {
+    data.eventData = {
       create: {
-        event_data: event_data,
+        eventData: eventData,
       },
     };
   }
 
-  return runQuery(
-    prisma.event.create({
-      data,
-    }),
-  );
+  return prisma.client.event.create({
+    data,
+  });
 }
 
-async function clickhouseQuery(website_id, { session_uuid, url, event_name }) {
-  const params = [website_id, session_uuid, url?.substr(0, URL_LENGTH), event_name?.substr(0, 50)];
+async function clickhouseQuery(
+  { websiteUuid: websiteId },
+  { session: { country, sessionUuid, ...sessionArgs }, eventUuid, url, eventName, eventData },
+) {
+  const { getDateFormat, sendMessage } = kafka;
 
-  return rawQueryClickhouse(
-    `
-    insert into umami_dev.event (created_at, website_id, session_uuid, url, event_name)
-    values (${getDateFormatClickhouse(new Date())},  $1, $2, $3, $4);`,
-    params,
-  );
+  const params = {
+    session_id: sessionUuid,
+    event_id: eventUuid,
+    website_id: websiteId,
+    created_at: getDateFormat(new Date()),
+    url: url?.substring(0, URL_LENGTH),
+    event_name: eventName?.substring(0, EVENT_NAME_LENGTH),
+    event_data: eventData ? JSON.stringify(eventData) : null,
+    ...sessionArgs,
+    country: country ? country : null,
+  };
+
+  await sendMessage(params, 'event');
 }

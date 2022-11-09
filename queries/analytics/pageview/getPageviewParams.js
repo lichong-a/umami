@@ -1,15 +1,16 @@
-import { parseFilters, rawQuery, runAnalyticsQuery } from 'lib/db';
-import { CLICKHOUSE, RELATIONAL } from 'lib/constants';
+import prisma from 'lib/prisma';
+import { runQuery, CLICKHOUSE, PRISMA } from 'lib/db';
 
 export async function getPageviewParams(...args) {
-  return runAnalyticsQuery({
-    [RELATIONAL]: () => relationalQuery(...args),
+  return runQuery({
+    [PRISMA]: () => relationalQuery(...args),
     [CLICKHOUSE]: () => clickhouseQuery(...args),
   });
 }
 
-async function relationalQuery(website_id, start_at, end_at, column, table, filters = {}) {
-  const params = [website_id, start_at, end_at];
+async function relationalQuery(websiteId, start_at, end_at, column, table, filters = {}) {
+  const { parseFilters, rawQuery } = prisma;
+  const params = [start_at, end_at];
   const { pageviewQuery, sessionQuery, eventQuery, joinSession } = parseFilters(
     table,
     column,
@@ -18,20 +19,19 @@ async function relationalQuery(website_id, start_at, end_at, column, table, filt
   );
 
   return rawQuery(
-    `
-    select url x,
+    `select url x,
       count(*) y
     from ${table}
+      ${` join website on ${table}.website_id = website.website_id`}
       ${joinSession}
-    where ${table}.website_id=$1
-      and ${table}.created_at between $2 and $3
+    where website.website_uuid='${websiteId}'
+      and ${table}.created_at between $1 and $2
       and ${table}.url like '%?%'
       ${pageviewQuery}
       ${joinSession && sessionQuery}
       ${eventQuery}
     group by 1
-    order by 2 desc
-    `,
+    order by 2 desc`,
     params,
   );
 }
