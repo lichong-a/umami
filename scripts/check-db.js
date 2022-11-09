@@ -1,8 +1,14 @@
+/* eslint-disable no-console */
 require('dotenv').config();
 const { PrismaClient } = require('@prisma/client');
 const chalk = require('chalk');
 const spawn = require('cross-spawn');
 const { execSync } = require('child_process');
+
+if (process.env.SKIP_DB_CHECK) {
+  console.log('Skipping database check.');
+  process.exit(0);
+}
 
 const prisma = new PrismaClient();
 
@@ -34,7 +40,7 @@ async function checkConnection() {
 
 async function checkTables() {
   try {
-    await prisma.account.findFirst();
+    await prisma.$queryRaw`select * from account limit 1`;
 
     success('Database tables found.');
   } catch (e) {
